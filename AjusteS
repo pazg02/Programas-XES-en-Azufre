@@ -1,0 +1,157 @@
+import numpy as np
+import pandas as pd
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
+from scipy.special import wofz
+import os
+
+"--------------------"
+# Definición del modelo de ajuste:
+"--------------------"
+
+# Función Voigt
+def voigt(x, sigma, gamma):
+    z = (x + 1j*gamma) / (sigma * np.sqrt(2))
+    return np.real(wofz(z)) / (sigma * np.sqrt(2*np.pi))
+
+# parámetros fijos
+ratio=0.5
+gamma1=0.65/2
+gamma2=0.64/2
+delta=1.2
+
+# Modelo de ajuste
+def doble_voigt(x, cen, amp1, sigma, m, b):
+    amp2 = amp1 * ratio  # Amplitud del segundo pico (Ka2)
+    fondo= m*x+b
+    return (amp1 * voigt(x - cen, sigma, gamma1) +
+            amp2 * voigt(x - cen + delta, sigma, gamma2)
+            + fondo)
+
+# Lee los datos del archivo
+file_path = # insertar
+data = pd.read_csv(file_path, skiprows=2, delim_whitespace=True) # cambiar según características del archivo.
+
+# Extrae las columnas con los datos
+motor1 = data.iloc[:, 0] 
+cuentas = data.iloc[:, 2]
+cuentas_porseg= data.iloc[:, 4]
+print(f"Máximo de cuentas: {cuentas_porseg.max()}")
+
+"--------------------"
+# Calibración:
+"--------------------"
+
+d_si = 3.1355  # Espaciado interplanar para Si(111) en Ångstroms
+
+# Valores de referencia para la calibración en energía
+ind_max=cuentas.idxmax()
+motor1_0 = data.loc[ind_max, 'motor1']  # Posición en pasos de la Kalpha1
+theta_0 = 58.99 # Ángulo de Bragg de la Kalpha1
+
+# Convierte motor1 a ángulo (en grados)
+theta_bragg = theta_0 - (motor1 - motor1_0) / 200.0
+
+# Convierte theta a longitud de onda usando la ley de Bragg
+lambda_m = 2 * d_si * np.sin(np.radians(theta_bragg))
+
+# Convierte longitud de onda a energía en eV
+E = 12398.42 / lambda_m
+
+# Define los errores en las cuentas como la raíz cuadrada de las cuentas
+sigma_cuentas = np.sqrt(cuentas)
+# Maneja posibles valores de sqrt(0) asignando un mínimo error
+sigma_cuentas[sigma_cuentas == 0] = 10.0
+
+"--------------------"
+# Ajuste:
+"--------------------"
+
+# Valores iniciales para el ajuste
+# [cen, amp1, sigma, m, b]
+initial_guess = [2306.64, 2000, 2, 0, 0]
+
+# Establece los límites para los parámetros de ajuste
+bounds = (
+    [2290, 1000, 0.1,-1, 0],  # Límites inferiores
+    [2315, 10000, 6, 1, np.inf]   # Límites superiores
+)
+
+# Realiza el ajuste con restricciones y pesos
+popt, pcov = curve_fit(
+    doble_voigt, E, cuentas, p0=initial_guess, bounds=bounds, sigma=sigma_cuentas, absolute_sigma=True
+)
+
+# Genera datos ajustados
+E_fit = np.linspace(min(E), max(E), 1000)
+cuentas_fit = doble_voigt(E_fit, *popt)
+
+# Calcula las dos funciones Voigt por separado
+cen, amp1, sigma, m, b = popt
+amp2 = amp1 * ratio
+voigt1 = amp1 * voigt(E_fit - cen, sigma, gamma1)
+voigt2 = amp2 * voigt(E_fit - cen + delta, sigma, gamma2)
+
+# Calcula la resolución en energía
+fwhm = 2 * sigma * np.sqrt(2 * np.log(2))
+
+# Calcula las incertidumbres de los parámetros ajustados
+perr = np.sqrt(np.diag(pcov))
+fwhmerr = 2 * perr[2] * np.sqrt(2 * np.log(2))
+
+# Calcula el chi cuadrado reducido
+residuos = cuentas - doble_voigt(E, *popt)
+chi2 = np.sum((residuos / sigma_cuentas) ** 2)
+chi2_reducido = chi2 / (len(cuentas) - len(popt))
+
+"--------------------"
+# Gráfico:
+"--------------------"
+
+# Prepara los textos a mostrar en el gráfico
+param_text = (f"Centro (K$\\alpha_1$): {cen:.2f} ± {perr[0]:.2f} eV\n"
+              f"Amplitud K$\\alpha_1$: {amp1:.0f} ± {perr[1]:.0f}\n"
+              f"$\\sigma$: {sigma:.2f} ± {perr[2]:.2f}\n"
+              f"Resolucion (FWHM): {fwhm:.2f} ± {fwhmerr:.2f} eV\n"
+              f"Amplitud K$\\alpha_2$: {amp2:.0f} ± {ratio * perr[1]:.0f}\n"            
+              f"$\\chi^2$ reducido: {chi2_reducido:.2f}")
+
+# Crea un gráfico con dos subgráficos apilados verticalmente
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), height_ratios=[2,1])
+
+# Primer gráfico (ajuste)
+ax1.errorbar(E, cuentas, yerr=sigma_cuentas, fmt='o', label='Datos experimentales', markersize=4, capsize=2)
+ax1.plot(E_fit, cuentas_fit, 'r--', label='Ajuste Voigt Total')
+ax1.plot(E_fit, voigt1, 'g--', label=f'Voigt K$\\alpha_1$')
+ax1.plot(E_fit, voigt2, 'm--', label=f'Voigt K$\\alpha_2$')
+ax1.set_xlabel('Energía (eV)', fontsize=14)
+ax1.set_ylabel('Cuentas', fontsize=14)
+ax1.legend(fontsize=14, frameon=True)
+ax1.grid(True)
+ax1.set_title(os.path.basename(file_path) )
+
+# Agregar el cuadro de texto con los parámetros
+ax1.text(0.05, 0.95, param_text, transform=ax1.transAxes, fontsize=14,
+         verticalalignment='top', bbox=dict(boxstyle="round,pad=0.3", edgecolor='black', facecolor='white'))
+
+# Segundo gráfico (residuos)
+ax2.errorbar(E, residuos, yerr=sigma_cuentas, fmt='o', markersize=4, capsize=2, label='Residuos')
+ax2.axhline(0, color='gray', linestyle='--')
+# Añadir bandas de incertidumbre
+ax2.fill_between(E, -3*sigma_cuentas, 3*sigma_cuentas, color='yellow', alpha=0.3, label='±3σ')
+ax2.set_xlabel('Energía (eV)', fontsize=14)
+ax2.set_ylabel('Residuos', fontsize=14)
+ax2.legend(fontsize=14, frameon=True)
+ax2.grid(True)
+ax2.set_title('Residuos del ajuste')
+
+plt.tight_layout()
+
+# Opcional, guarda la figura.
+#plt.savefig(fr"C:\Users\guadi\OneDrive\Escritorio\UNI\5to año\trabajo final\azufre\gráficos tesis\{os.path.basename(file_path)}.svg", format="svg", dpi=300)
+
+
+plt.show()
+
+
+
