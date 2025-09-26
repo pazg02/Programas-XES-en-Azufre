@@ -1,0 +1,156 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+
+# Importamos algunos datos generales
+a= 5.431020511*10**(-7) #mm, parámetro de red Si. NIST
+h,k,l=1,1,1
+d=a/np.sqrt(h**2+k**2+l**2) #distancia interplanar para Si(111)
+n=1 #orden de reflexión
+
+E_S=np.array([2307.84, 2464.0])  #Energías de la S-Ka y S-Kb en eV
+h_planck=4.135667696*10**(-15)   #eV*s Cte de Planck
+c=299792458*10**3 #mm/s Velocidad de la luz
+
+#longitudes de onda en mm
+l_S=h_planck*c/E_S
+
+#ángulos de Bragg EN RADIANES
+t_B_S=np.arcsin(l_S*n/(2*d))
+
+#print(f'Ángulo de Bragg para SKa= {np.degrees(t_B_S[0])}')
+#print(f'Ángulo de Bragg para SKb= {np.degrees(t_B_S[1])}')
+
+#Angulo de bragg para el fosforo
+E_P=np.array([2013.7, 2139.1 ]) #Energías de la P-Ka y P-Kb en eV
+
+#longitudes de onda en mm
+l_P=h_planck*c/E_P
+
+#ángulos de Bragg EN RADIANES
+t_B_P=np.arcsin(l_P*n/(2*d))
+
+
+'----------'
+' CONTRIBUCIÓN INTRÍNSECA (Darwin)'
+'----------'
+def Contribucion_Darwin(t_B):
+    #datos:
+    F_f=13.959012945310254 #factor de forma, obtenido de:
+    F_hkl= F_f*abs(1+np.cos(np.pi*(h+k+l)/2)-1j*np.sin(np.pi*(h+k+l)/2)) #factor de estructura
+    r_0= 2.8179403205*10**(-12) # mm #radio clásico del electrón
+    C= 1+(np.cos(t_B))**2 #factor de polarización
+    V= a**3 #Volumen de la celda unidad
+    long_onda = 2*d*np.sin(t_B) #longitud de onda en mm
+
+    T_i=(2*r_0*long_onda**2*F_hkl*C)/(np.pi*V*np.sin(2*t_B))
+
+    return T_i/np.tan(t_B)
+
+
+'----------'
+' CONTRIBUCIÓN POR DEFORMACIÓN DEL CRISTAL (STRAIN)'
+'----------'
+
+m_S=2.20579*10**(-3) #mm Absorption lenght de la energía SKa en Si
+m_P=1.57403*10**(-3) #mm 
+
+def Contribucion_Analizador(t_B,R,m):
+    
+    v=0.22 #radio de Poisson. Sin unidades.
+    W_a=abs((m/R)*((1/(np.tan(t_B))**2)-2*v))
+
+    return W_a
+
+
+'----------'
+' CONTRIBUCIÓN POR EL TAMAÑO DEL HAZ'
+'----------'
+def Contribucion_Haz(t_B,R,h_par,h_perp):
+
+    # Theta_haz ^2 = T_h2
+    T_h2=(h_par/(R*np.sin(t_B)))**2+((h_perp/(2*R))**2*(1/(2*np.sin(t_B)*np.cos(t_B))))**2
+
+    return np.sqrt(T_h2)/np.tan(t_B)
+
+
+'----------'
+' CONTRIBUCIÓN POR EL TAMAÑO DE LOS CRISTALES'
+'----------'
+def Contribucion_Cristales(t_B,R,c_par,c_perp):
+    
+    #esto está al cuadrado: Theta_cristal^2= T_c2
+    T_c2=(c_par/R)**2+((c_perp/R)**2*(1/(8*np.sin(t_B)*np.cos(t_B))))**2
+
+    return np.sqrt(T_c2)/np.tan(t_B)
+
+
+'----------'
+'ABERRACIÓN DE JOHANN'
+'----------'
+def Contribucion_Johann(t_B,R,A):
+
+    W_J=((A/2)/(R*np.sin(t_B)))**2/(8*np.tan(t_B))
+    
+    return W_J/np.tan(t_B)
+
+
+'----------'
+'CONTRIBUCIÓN POR EL ESPESOR DE LA MUESTRA'
+'----------'
+
+t_S=0.0355 #Attenuation length de CoKalpha en S = 35.5micrones
+t_P=0.0401 #Attenuation length de CoKalpha en P = 40.1micrones
+
+def Contribucion_Muestra(t_B,R,t):
+    #t=2#mm pero es muy ancho, uso att lenght de CoKalpha en S = 35.5micrones
+    phi=np.pi/4 #45 grados
+    
+    T_m=2*t*np.cos(phi/2)/(R*np.sin(t_B))
+        
+    return T_m/np.tan(t_B)
+
+
+'----------'
+'CÁLCULO DE LA RESOLUCIÓN TOTAL'
+#Suma en cuadratura de las contribuciones.
+'----------'
+
+def Resolucion(t_B,R,E,c_par,c_perp,h_par,h_perp,A,t,m):
+    #lista de las funciones evaluadas
+    Contribuciones = [Contribucion_Cristales(t_B,R,c_par,c_perp),Contribucion_Analizador(t_B,R,m),Contribucion_Darwin(t_B),Contribucion_Haz(t_B,R,h_par,h_perp),Contribucion_Johann(t_B,R,A),Contribucion_Muestra(t_B,R,t)]
+    
+    #calculamos la suma en cuadratura para cada energía
+    dE_Ka= np.sqrt(sum((c[0])**2 for c in Contribuciones))*E[0]
+    dE_Kb= np.sqrt(sum((c[1])**2 for c in Contribuciones))*E[1]
+
+    Tabla = {
+            'Contribución': ['Cristales', 'Analizador', 'Darwin', 'Haz', 'Johann','Espesor'],
+            'Ka [eV]': [Contribucion_Cristales(t_B, R, c_par, c_perp)[0]*E[0], Contribucion_Analizador(t_B,R,m)[0]*E[0], Contribucion_Darwin(t_B)[0]*E[0], Contribucion_Haz(t_B, R, h_par, h_perp)[0]*E[0], Contribucion_Johann(t_B, R, A)[0]*E[0], Contribucion_Muestra(t_B,R,t)[0]*E[0]],
+            'Kb [eV]': [Contribucion_Cristales(t_B, R, c_par, c_perp)[1]*E[1], Contribucion_Analizador(t_B,R,m)[1]*E[1], Contribucion_Darwin(t_B)[1]*E[1], Contribucion_Haz(t_B, R, h_par, h_perp)[1]*E[1], Contribucion_Johann(t_B, R, A)[1]*E[1], Contribucion_Muestra(t_B,R,t)[1]*E[1]],
+        }
+
+    Tabla['Ka [eV]'].append(dE_Ka)
+    Tabla['Kb [eV]'].append(dE_Kb)
+    Tabla['Contribución'].append('Resolución Total')
+    
+    df=pd.DataFrame(Tabla)
+    
+    df['Ka [eV]'] = df['Ka [eV]'].apply(lambda x: round(x, 3))
+    df['Kb [eV]'] = df['Kb [eV]'].apply(lambda x: round(x, 3))
+
+
+    return dE_Ka, dE_Kb, df
+
+
+
+
+#FOSFORO
+_,_,resumenP = Resolucion(t_B=t_B_P, R=415, E=E_P, c_par=1, c_perp=1, h_par=0.4, h_perp=2.4, A=100, t=t_P, m=m_P)
+
+print(f'fosforo: {resumenP}')
+
+#AZUFRE
+_,_,resumenS = Resolucion(t_B=t_B_S, R=415, E=E_S, c_par=1, c_perp=1, h_par=0.4, h_perp=2.4, A=50, t=t_S, m=m_S)
+print(f'azufre: {resumenS}')
