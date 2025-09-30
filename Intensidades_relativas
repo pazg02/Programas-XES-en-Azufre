@@ -1,0 +1,154 @@
+import numpy as np
+import pandas as pd
+import sys
+import matplotlib.pyplot as plt
+
+# Importa archivo con funciones de atenuación y absorción de distintos elementos.
+sys.path.append(r"C:\Users\guadi\OneDrive\Escritorio\UNI\5to año\interaccion de la radiacion con la materia\lab 2 algoritmo")
+import func_abs_att as fun
+
+# Diccionario de masas atómicas
+MA={'S':32.06,'Cu':63.546,'O':15.99,'Mn':54.94,'Li':6.94}
+
+# Energías necesarias
+E_CoKa = 6.9309 #keV
+E_SKa = 2.3095 #keV
+E_SKb = 2.4650 #keV
+E_MnKa = 5.899 #keV
+
+
+def Atenuacion_total(formula, E):
+    ''''''
+    ' ingresamos la fórmula química (previo agregar los elementos al diccionario MA) '
+    ' E = energía para la cual se calcula la atenuación'
+    ''''''
+    masa_total = sum(n * MA[el] for el, n in formula.items())
+    
+    atenuacion = 0
+    for el, n in formula.items():
+        C_el = (n * MA[el]) / masa_total
+        atenuacion += C_el * getattr(fun, f'Atenuacion{el}')(E)
+    return atenuacion
+
+# Algunos compuestos (formula)
+MnS = {'Mn': 1, 'S': 1}
+MnSO4 = {'Mn': 1, 'S': 1, 'O': 4}
+CuSO4 = {'Cu': 1, 'S': 1, 'O': 4}
+Li2S = {'Li': 2, 'S': 1}
+S_puro = {'S': 1}
+
+C_S_0 = 1  # Concentración de S en la muestra de referencia (S puro)
+
+
+"----------"
+"Kalpha - Caso monocromático"
+"----------"
+
+def intensidad_relativa_mono_Ka(formula):
+
+    masa_total = sum(n * MA[el] for el, n in formula.items())
+    C_S = formula.get('S', 0) * MA['S'] / masa_total
+    
+    A_0 = Atenuacion_total(S_puro, E_CoKa) + Atenuacion_total(S_puro, E_SKa)
+    A_1 = Atenuacion_total(formula, E_CoKa) + Atenuacion_total(formula, E_SKa)
+
+    return (C_S / C_S_0) * (A_0 / A_1)
+
+
+"----------"
+"Kbeta - Caso monocromático"
+"----------"
+
+def intensidad_relativa_mono_Kb(formula):
+
+    masa_total = sum(n * MA[el] for el, n in formula.items())
+    C_S = formula.get('S', 0) * MA['S'] / masa_total
+    
+    A_0 = Atenuacion_total(S_puro, E_CoKa) + Atenuacion_total(S_puro, E_SKb)
+    A_1 = Atenuacion_total(formula, E_CoKa) + Atenuacion_total(formula, E_SKb)
+    
+    return  (C_S / C_S_0) * (A_0 / A_1)
+
+
+"----------"
+"Kalpha - Caso policromático"
+"----------"
+
+tubo_Co = pd.read_excel(r"C:\Users\guadi\OneDrive\Escritorio\UNI\5to año\interaccion de la radiacion con la materia\lab 2 algoritmo\tuboCo.ods")
+espectro_filtrado=tubo_Co.dropna().reset_index(drop=True)
+
+def intensidad_relativa_poli_Ka(formula):
+    
+    masa_total = sum(n * MA[el] for el, n in formula.items())
+    C_S = formula.get('S', 0) * MA['S'] / masa_total
+    
+    A_0 = sum(espectro_filtrado['Int. Rel'][i]* fun.AbsorcionS(espectro_filtrado['Energias'][i]) / (Atenuacion_total(formula, espectro_filtrado['Energias'][i]) + Atenuacion_total(formula, E_SKa)) for i in range(len(espectro_filtrado['Energias'])))
+    A_1 = sum(espectro_filtrado['Int. Rel'][i]* fun.AbsorcionS(espectro_filtrado['Energias'][i]) / (Atenuacion_total(S_puro, espectro_filtrado['Energias'][i]) + Atenuacion_total(S_puro, E_SKa)) for i in range(len(espectro_filtrado['Energias'])))
+
+    return (C_S / C_S_0) * (A_0 / A_1)
+
+
+"----------"
+"Kbeta - Caso policromático"
+"----------"
+
+def intensidad_relativa_poli_Kb(formula):
+    
+    masa_total = sum(n * MA[el] for el, n in formula.items())
+    C_S = formula.get('S', 0) * MA['S'] / masa_total
+    
+    A_0 = sum(espectro_filtrado['Int. Rel'][i]* fun.AbsorcionS(espectro_filtrado['Energias'][i]) / (Atenuacion_total(formula, espectro_filtrado['Energias'][i]) + Atenuacion_total(formula, E_SKb)) for i in range(len(espectro_filtrado['Energias'])))
+    A_1 = sum(espectro_filtrado['Int. Rel'][i]* fun.AbsorcionS(espectro_filtrado['Energias'][i]) / (Atenuacion_total(S_puro, espectro_filtrado['Energias'][i]) + Atenuacion_total(S_puro, E_SKb)) for i in range(len(espectro_filtrado['Energias'])))
+
+    return (C_S / C_S_0) * (A_0 / A_1)
+
+
+# MOSTRAR LOS RESULTADOS
+
+resultados = []
+
+# ---- Monocromático ----
+for formula, nombre in zip([MnS, MnSO4, CuSO4, Li2S], ["MnS", "MnSO4", "CuSO4", "Li2S"]):
+    resultados.append({
+        "Compuesto": nombre,
+        "Caso": "Monocromático",
+        "Emisión": "Kα",
+        "Intensidad relativa": intensidad_relativa_mono_Ka(formula)
+    })
+    resultados.append({
+        "Compuesto": nombre,
+        "Caso": "Monocromático",
+        "Emisión": "Kβ",
+        "Intensidad relativa": intensidad_relativa_mono_Kb(formula)*0.066
+    })
+
+# ---- Policromático ----
+for formula, nombre in zip([MnS, MnSO4, CuSO4, Li2S], ["MnS", "MnSO4", "CuSO4", "Li2S"]):
+    resultados.append({
+        "Compuesto": nombre,
+        "Caso": "Policromático",
+        "Emisión": "Kα",
+        "Intensidad relativa": intensidad_relativa_poli_Ka(formula)
+    })
+    resultados.append({
+        "Compuesto": nombre,
+        "Caso": "Policromático",
+        "Emisión": "Kβ",
+        "Intensidad relativa": intensidad_relativa_poli_Kb(formula)*0.066
+    })
+
+
+df_resultados = pd.DataFrame(resultados)
+
+orden_compuestos = ["MnS", "MnSO4", "CuSO4", "Li2S"]
+
+# Convertir la columna "Compuesto" en categórica con ese orden
+df_resultados["Compuesto"] = pd.Categorical(df_resultados["Compuesto"],
+                                            categories=orden_compuestos,
+                                            ordered=True)
+
+# Ordenar por compuesto, luego por caso y emisión
+df_resultados = df_resultados.sort_values(["Compuesto", "Caso", "Emisión"]).reset_index(drop=True)
+
+
+print(df_resultados.pivot_table(index=["Compuesto"], columns=["Caso", "Emisión"], values="Intensidad relativa"))
